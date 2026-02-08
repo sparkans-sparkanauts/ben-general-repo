@@ -1,0 +1,321 @@
+package org.firstinspires.ftc.teamcode;
+
+import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.qualcomm.robotcore.eventloop.opmode.OpMode;
+import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.IMU;
+import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.util.ElapsedTime;
+import com.qualcomm.robotcore.util.Range;
+
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+
+
+@TeleOp
+public class worksmeh extends OpMode {
+
+    // idek what this is
+
+    private DcMotor turret, intake, index;
+    private DcMotorEx flyWheel;
+    private Servo flicker, hood, blocker;
+    private Limelight3A limelight;
+    private IMU imu;
+
+    // variables
+    double forward, strafe, rotate;
+    double turretPower, rpm, lastError, lastTime;
+    double HOOD_FAR = 0.6;
+    double HOOD_CLOSE = 0.35;
+    double HOOD_MED = 0.5;
+
+    double turretP = 0.035;
+    double turretD = 0.005;
+
+    double flyWheelP = 0.0015;
+
+    String zone = "close";
+
+    // hood/turret config
+    double hoodPosition = 0.3;
+
+    double rpmTarget = 0;
+    double rpmTolerance = 100;
+    boolean flywheelAtSpeed = false;
+
+    double RPM_HIGH = 1500;
+    double RPM_MED = 1200;
+    double RPM_LOW = 1300;
+
+    double flyWheelI = 0;
+    double flyWheelI_Tune = 0.00005;
+
+    private void flywheelRPM() {
+
+        double error = rpmTarget - rpm;
+        double power = error * flyWheelP + flyWheelI; // math for getting the power to the motor
+        if (rpm > 900) {
+            flyWheelI += error * flyWheelI_Tune; // integrate the error over time
+            telemetry.addData("current Intigral", flyWheelI);
+        } else {
+            flyWheelI = 0;
+        }
+
+        flyWheel.setPower(Range.clip(power, 0, 1));
+
+        flywheelAtSpeed = Math.abs(error) <= rpmTolerance;
+
+
+    }
+
+    private enum flyWheelState {
+        IDLE,
+        SPIN_UP,
+        READY,
+        FIRING,
+        REVERSE
+
+    }
+
+    ElapsedTime indexTimer;
+
+    final double fireTime = 500;
+    boolean lastX = false;
+    boolean lastA = false;
+    boolean intakeOn = false;
+    boolean isShooting = false;
+    private flyWheelState FlyWheelState = flyWheelState.IDLE;
+
+    prereqs1 drive = new prereqs1();
+
+
+    @Override
+    public void init() {
+        // HARDWARE MAP
+        drive.init(hardwareMap);
+        turret = hardwareMap.get(DcMotorEx.class, "turret");
+        intake = hardwareMap.get(DcMotor.class, "Intake");
+        index = hardwareMap.get(DcMotor.class, "index");
+        flyWheel = hardwareMap.get(DcMotorEx.class, "flyWheel");
+        flicker = hardwareMap.get(Servo.class, "servo");
+        hood = hardwareMap.get(Servo.class, "hood");
+        blocker = hardwareMap.get(Servo.class, "blocker");
+        limelight = hardwareMap.get(Limelight3A.class, "limelight");
+        imu = hardwareMap.get(IMU.class, "imu");
+
+        // ODO RECALIBRATE
+        drive.configureOtos();
+
+
+        // MOTOR DIRECTIONS
+        turret.setDirection(DcMotor.Direction.FORWARD); // negative clockwise, positive counterclockwise
+        intake.setDirection(DcMotor.Direction.FORWARD);
+        flyWheel.setDirection(DcMotor.Direction.REVERSE);
+        index.setDirection(DcMotor.Direction.REVERSE);
+
+
+        // --- Run without encoders ---
+        turret.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        intake.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        index.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+
+
+        flyWheel.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        flyWheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+
+        // zero power action
+        turret.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        //misc
+        hood.setPosition(hoodPosition);
+        limelight.pipelineSwitch(0);
+        indexTimer = new ElapsedTime();
+
+
+    }
+
+    public void start() {
+
+        limelight.start();
+    }
+
+
+    @Override
+    public void loop() {
+        //DRIVE CONTROL
+        forward = -gamepad1.left_stick_y;
+        strafe = -gamepad1.left_stick_x;
+        rotate = gamepad1.right_stick_x;
+
+        drive.FieldOrientedTranslate(forward, strafe, rotate);
+
+
+        //TURRET ROTATION
+        YawPitchRollAngles orientation = imu.getRobotYawPitchRollAngles();
+        limelight.updateRobotOrientation(orientation.getYaw(AngleUnit.DEGREES));
+        LLResult llResult = limelight.getLatestResult();
+
+
+        //tracking, PID and allat i dont wanna explain it
+        if (llResult != null && llResult.isValid() && gamepad1.left_bumper) {
+
+            double error = llResult.getTx();   // degrees
+            double currentTime = getRuntime();
+            double dt = currentTime - lastTime;
+
+
+            double derivative = (error - lastError) / dt /* Use last number for tuning, lower is less powerfull */;
+
+            turretPower = (turretP * error);// * Math.min((derivative/turretD),1);
+
+            turretPower = Math.max(-0.8, Math.min(0.8, turretPower));
+
+            lastError = error;
+            lastTime = currentTime;
+
+        } else {
+
+            turretPower = 0;
+        }
+
+        turret.setPower(turretPower * 0.8);
+
+
+        //INTAKE
+        boolean aPressed = gamepad1.a && !lastA;
+
+        //toggle
+        if (aPressed) {
+            intakeOn = !intakeOn;
+            gamepad1.rumble(1, 1, 100); // rumble for when the intake toggles
+        }
+
+        //motor control
+        if (!intakeOn) {
+            intake.setPower(0);
+        } else {
+
+            if (gamepad1.b) {
+                intake.setPower(-1);// reverse override
+                gamepad1.rumble(50);// hopefully this feels like its constant bc its being called almost constantly while its being held
+            } else {
+                intake.setPower(1);  //else normal
+            }
+        }
+
+        lastA = gamepad1.a;
+
+
+        //FLYWHEEL
+        rpm = flyWheel.getVelocity();
+        switch (FlyWheelState) {
+
+            case IDLE:
+                rpmTarget = 0;
+                flyWheel.setPower(0);
+                index.setPower(0);
+                isShooting = false;
+                blocker.setPosition(.8);
+                flicker.setPosition(.55);
+
+
+                if (gamepad1.left_trigger > 0.1) {
+
+                    if (llResult != null && llResult.isValid()) {
+                        if (llResult.getTa() <= 0.5) {
+                            rpmTarget = RPM_HIGH;
+                            hood.setPosition(HOOD_FAR);
+                            zone = "far";
+                        } else if (llResult.getTa() >= 1) {
+                            rpmTarget = RPM_LOW;
+                            hood.setPosition(HOOD_CLOSE);
+                            zone = "close";
+                        } else {
+                            rpmTarget = RPM_MED;
+                            hood.setPosition(HOOD_MED);
+                            zone = "med";
+                        }
+                    } else {                        //fallback in case limelight breaks
+                        rpmTarget = RPM_MED;
+                        hood.setPosition(HOOD_MED);
+                    }
+                    FlyWheelState = flyWheelState.SPIN_UP;
+                }
+
+                if (gamepad1.right_trigger > 0.1) {
+                    FlyWheelState = flyWheelState.REVERSE;
+                }
+
+                break;
+
+            case SPIN_UP:
+                flywheelRPM();
+                index.setPower(0);
+                blocker.setPosition(.8);
+
+                if (flywheelAtSpeed) {
+                    gamepad1.rumble(50); //quick rumble to let me know its good
+                }
+
+                if (flywheelAtSpeed && gamepad1.x && !lastX) {
+                    indexTimer.reset();
+                    isShooting = true;
+                    FlyWheelState = flyWheelState.FIRING;
+                }
+                if (gamepad1.left_trigger < 0.1) {
+                    FlyWheelState = flyWheelState.IDLE;
+                }
+                break;
+
+            case FIRING:
+                blocker.setPosition(.3);
+                flywheelRPM();
+                index.setPower(1.0);
+
+                if (indexTimer.milliseconds() >= 225 && indexTimer.milliseconds() < fireTime) {
+                    flicker.setPosition(0.3);
+                }
+
+                if (indexTimer.milliseconds() >= fireTime) {
+                    index.setPower(0);
+                    flicker.setPosition(.65);
+                    isShooting = false;
+                    FlyWheelState = flyWheelState.READY;
+                }
+                break;
+
+            case READY:
+                blocker.setPosition(.8);
+                flywheelRPM();
+                index.setPower(0);
+
+                if (gamepad1.left_trigger < 0.1) {
+                    FlyWheelState = flyWheelState.IDLE;
+                }
+
+                break;
+
+            case REVERSE: // flywheel intake if needed bc intake breaks
+
+                blocker.setPosition(0.3);
+                index.setPower(-.2);
+                flyWheel.setPower(-.4);
+                if (gamepad1.right_trigger < 0.1) {
+                    FlyWheelState = flyWheelState.IDLE;
+                }
+        }
+        lastX = gamepad1.x;
+
+
+        telemetry.addData("Turret power", turretPower);
+        telemetry.addData("Valid", llResult != null && llResult.isValid());
+        telemetry.addData("hood angle", hoodPosition);
+        telemetry.addData("Ta", llResult.getTa());
+        telemetry.addData("Zone", zone);
+        telemetry.update();
+    }
+}
