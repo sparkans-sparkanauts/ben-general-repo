@@ -4,13 +4,14 @@ import com.qualcomm.hardware.limelightvision.LLResult;
 
 public class LimelightMath {
 
-    LLResult llResult;
-    public double distanceFromTag() {
-        if (llResult != null && llResult.isValid()) {
+    public double distanceFromTag(LLResult llresult) {
 
-            double theta = llResult.getTy();
-            //degrees
+        if (llresult != null && llresult.isValid()) {
+
+
             double LLAngle = 20;
+
+            double theta = llresult.getTy();
             theta += LLAngle;
 
             theta = Math.toRadians(theta);
@@ -18,12 +19,15 @@ public class LimelightMath {
             //mm
             double tagHeight = 762;
             //mm
-            double LLHeight = 279.4;
+            double LLHeight = 275.4;
+            double LIMELIGHTCONSTANT = 1;
+
+
+
             double LIMELIGHTDISTCONST_M = tagHeight - LLHeight;
             double DIST_M = LIMELIGHTDISTCONST_M / Math.tan(theta);
-            double DIST_I = DIST_M / 25.4;
 
-            return DIST_I;
+            return (DIST_M / 25.4) - LIMELIGHTCONSTANT;
         }
         return -1;
     }

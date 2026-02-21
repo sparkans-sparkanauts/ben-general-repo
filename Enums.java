@@ -9,7 +9,6 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.IMU;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
-import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
@@ -18,93 +17,38 @@ import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 @TeleOp
 public class Enums extends OpMode {
 
+    private interPLUH rpm = new interPLUH("rpm");
+    private interPLUH hoodAngle = new interPLUH("hood");
+
+    LLResult llResult;
+    prereqs1 drive = new prereqs1();
+    LimelightMath limelightMath = new LimelightMath();
+    Outtake flywheelMath = new Outtake();
+
+
     // idek what this is
 
     private DcMotor turret, intake, index;
-    private DcMotorEx flyWheel;
-    private Servo flicker, hood, blocker;
+    private Servo flicker, blocker;
     private Limelight3A limelight;
     private IMU imu;
 
     // variables
     double forward, strafe, rotate;
-    double turretPower, rpm, lastError, lastTime;
-    double HOOD_FAR = 0.6;
-    double HOOD_CLOSE = 0.3;
-    double HOOD_MED = 0.4;
+    double turretPower, lastError, lastTime;
+
+
 
     double turretP = 0.03;
-    double turretD = 0;
-    double turretF = 0;
 
-    double flyWheelP = 0.0015;
 
     // hood/turret config
-    double hoodPosition = 0.3;
-
-    double rpmTarget = 0;
-    double rpmTolerance = 100;
-    boolean flywheelAtSpeed = false;
-
-    double RPM_HIGH = 1500;
-    double RPM_MED = 1200;
-    double RPM_LOW = 900;
-
-    double flyWheelI = 0;
-    double flyWheelI_Tune = 0.00005;
-
-    LLResult llResult;
-
-    double tagDistanceInchs;
     String zone = "close";
-
-
-    public void setHoodAngle() {
-        if (llResult != null && llResult.isValid()) {
-            if (tagDistanceInchs >= 72) {
-                rpmTarget = RPM_HIGH;
-                hood.setPosition(HOOD_FAR);
-                zone = "far";
-
-            } else if (tagDistanceInchs >= 36) {
-                rpmTarget = RPM_MED;
-                hood.setPosition(HOOD_MED);
-                zone = "med";
-
-            } else {
-                rpmTarget = RPM_LOW;
-                hood.setPosition(HOOD_CLOSE);
-                zone = "close";
-            }
-
-        } else { // fallback
-            rpmTarget = RPM_MED;
-            hood.setPosition(HOOD_MED);
-        }
-    }
 
     public void getLatestResult() {
         llResult = limelight.getLatestResult();
     }
 
-
-    private void flywheelRPM() {
-
-        double error = rpmTarget - rpm;
-        double power = error * flyWheelP + flyWheelI; // math for getting the power to the motor
-        if (rpm > 900) {
-            flyWheelI += error * flyWheelI_Tune; // integrate the error over time
-            telemetry.addData("current Intigral", flyWheelI);
-        } else {
-            flyWheelI = 0;
-        }
-
-        flyWheel.setPower(Range.clip(power, 0, 1));
-
-        flywheelAtSpeed = Math.abs(error) <= rpmTolerance;
-
-
-    }
 
 
     // states cah cah what the fuck is a kilometer
@@ -127,32 +71,32 @@ public class Enums extends OpMode {
     boolean readyToTrack = false;
     private FlyWheelState flyWheelState = Enums.FlyWheelState.IDLE;
 
-    prereqs1 drive = new prereqs1();
-    LimelightMath limelightMath = new LimelightMath();
-
-
     @Override
     public void init() {
         // HARDWARE MAP
         drive.init(hardwareMap);
+        flywheelMath.init(hardwareMap);
         turret = hardwareMap.get(DcMotorEx.class, "turret");
         intake = hardwareMap.get(DcMotor.class, "Intake");
         index = hardwareMap.get(DcMotor.class, "index");
-        flyWheel = hardwareMap.get(DcMotorEx.class, "flyWheel");
-        flicker = hardwareMap.get(Servo.class, "servo");
-        hood = hardwareMap.get(Servo.class, "hood");
-        blocker = hardwareMap.get(Servo.class, "blocker");
+        flicker = hardwareMap.get(Servo.class,"flicker");
+        blocker = hardwareMap.get(Servo.class,"blocker");
         limelight = hardwareMap.get(Limelight3A.class, "limelight");
         imu = hardwareMap.get(IMU.class, "imu");
 
         // ODO RECALIBRATE
         drive.configureOtos();
 
+        hoodAngle.add(36,.8);
+        hoodAngle.add(0, 0.2);
+
+        rpm.add(36, 1000);
+        rpm.add(0, 0);
+
 
         // MOTOR DIRECTIONS
         turret.setDirection(DcMotor.Direction.FORWARD); // negative clockwise, positive counterclockwise
         intake.setDirection(DcMotor.Direction.FORWARD);
-        flyWheel.setDirection(DcMotor.Direction.REVERSE);
         index.setDirection(DcMotor.Direction.REVERSE);
 
 
@@ -161,15 +105,10 @@ public class Enums extends OpMode {
         intake.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         index.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
-
-        flyWheel.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
-        flyWheel.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-
         // zero power action
         turret.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
         //misc
-        hood.setPosition(hoodPosition);
         limelight.pipelineSwitch(0);
         indexTimer = new ElapsedTime();
         lastTime = getRuntime();
@@ -185,6 +124,9 @@ public class Enums extends OpMode {
 
     @Override
     public void loop() {
+
+
+
         //DRIVE CONTROL
         forward = -gamepad1.left_stick_y;
         strafe = gamepad1.left_stick_x;
@@ -199,15 +141,22 @@ public class Enums extends OpMode {
         limelight.updateRobotOrientation(orientation.getYaw(AngleUnit.DEGREES));
 
 
-        //tracking, PIDF and allat i dont wanna explain it
-        if (llResult != null && llResult.isValid() && gamepad1.left_bumper || readyToTrack) {
+        //tracking, PIDF and allat i don't wanna explain it
+        if (llResult != null && llResult.isValid() && (gamepad1.left_bumper || readyToTrack)) {
 
             double error = llResult.getTx();   // degrees
             double currentTime = getRuntime();
+
+
             double dt = currentTime - lastTime;
 
+            if (dt <= 0) {
 
-            double derivative = (error - lastError) / dt /* Use last number for tuning, lower is less powerfull */;
+                dt = 0.00001;
+            }
+
+
+            double derivative = (error - lastError) / dt /* Use last number for tuning, lower is less powerful */;
 
             turretPower = (turretP * error);// * Math.min((derivative/turretD),1);
 
@@ -249,13 +198,23 @@ public class Enums extends OpMode {
 
 
         //FLYWHEEL
-        tagDistanceInchs = limelightMath.distanceFromTag();
-        rpm = flyWheel.getVelocity();
+
+        double distance = limelightMath.distanceFromTag(llResult);
+        boolean visionValid = (llResult != null && llResult.isValid());
+
+        if (flyWheelState != FlyWheelState.IDLE && distance > 0) {
+            flywheelMath.updateFromVision(distance, visionValid, getRuntime());
+        }
+
+            flywheelMath.flyWheel.setVelocity(rpm.get(limelightMath.distanceFromTag(llResult)));
+            flywheelMath.hood.setPosition(hoodAngle.get(limelightMath.distanceFromTag(llResult)));
+
         switch (flyWheelState) {
 
             case IDLE:
-                rpmTarget = 0;
-                flyWheel.setPower(0);
+
+                flywheelMath.flyWheelI = 0;
+                flywheelMath.rpmTarget = 0;
                 index.setPower(0);
                 isShooting = false;
                 blocker.setPosition(.8);
@@ -274,17 +233,17 @@ public class Enums extends OpMode {
                 break;
 
             case SPIN_UP:
-                flywheelRPM();
+                flywheelMath.flyWheelRPM();
                 index.setPower(0);
                 blocker.setPosition(.8);
                 readyToTrack = true;
-                setHoodAngle();
+                flywheelMath.setConfigFromDistance(distance);
 
-                if (flywheelAtSpeed) {
+                if (flywheelMath.flyWheelAtSpeed) {
                     gamepad1.rumble(50); //quick rumble to let me know its good
                 }
 
-                if (flywheelAtSpeed && gamepad1.x && !lastX) {
+                if (flywheelMath.flyWheelAtSpeed && gamepad1.x && !lastX) {
                     indexTimer.reset();
                     isShooting = true;
                     flyWheelState = Enums.FlyWheelState.FIRING;
@@ -296,7 +255,7 @@ public class Enums extends OpMode {
 
             case FIRING:
                 blocker.setPosition(.3);
-                flywheelRPM();
+                flywheelMath.flyWheelRPM();
                 index.setPower(1.0);
                 readyToTrack = true;
 
@@ -314,10 +273,11 @@ public class Enums extends OpMode {
 
             case READY:
                 blocker.setPosition(.8);
-                flywheelRPM();
+                flywheelMath.setConfigFromDistance(distance);
+                flywheelMath.flyWheelRPM();
                 index.setPower(0);
                 readyToTrack = false;
-                setHoodAngle();
+
 
                 if (gamepad1.left_trigger < 0.1) {
                     flyWheelState = Enums.FlyWheelState.IDLE;
@@ -329,7 +289,7 @@ public class Enums extends OpMode {
 
                 blocker.setPosition(0.3);
                 index.setPower(-.5);
-                flyWheel.setPower(-.4);
+                flywheelMath.flyWheel.setPower(-.4);
                 readyToTrack = false;
                 if (gamepad1.right_trigger < 0.1) {
                     flyWheelState = Enums.FlyWheelState.IDLE;
@@ -337,16 +297,21 @@ public class Enums extends OpMode {
         }
         lastX = gamepad1.x;
 
-        telemetry.addData("distance", limelightMath.distanceFromTag());
-        telemetry.addData("rpm", rpm);
-        telemetry.addData("turret power", turretPower);
-        telemetry.addData("target rpm", rpmTarget);
+        telemetry.addData("rpm", flywheelMath.rpm);
+        telemetry.addData("target rpm", flywheelMath.rpmTarget);
         telemetry.addData("flywheel state", flyWheelState);
-        telemetry.addData("hood pose", hoodPosition);
+
+        telemetry.addData("distance", distance);
+        telemetry.addData("turret power", turretPower);
+        telemetry.addData("hood pose", flywheelMath.hood.getPosition());
         telemetry.addData("Zone", zone);
         telemetry.addData("Valid", llResult != null && llResult.isValid());
+
+
         telemetry.addData("blocker pos", blocker.getPosition());
         telemetry.addData("flicker", flicker.getPosition());
+
+
         telemetry.update();
     }
 }
